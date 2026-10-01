@@ -47,6 +47,7 @@
 		<columnitem>
 			<fielddescr>Interface</fielddescr>
 			<fieldname>interface</fieldname>
+			<type>interface</type>	<!-- pkg.php shows the interface description (e.g. SERVERS) instead of opt7 -->
 		</columnitem>
 		<columnitem>
 			<fielddescr>Schedule (min)</fielddescr>
