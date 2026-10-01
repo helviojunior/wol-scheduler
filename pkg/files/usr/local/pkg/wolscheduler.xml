@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!DOCTYPE packagegui SYSTEM "../schema/packages.dtd">
+<?xml-stylesheet type="text/xsl" href="../xsl/package.xsl"?>
+<packagegui>
+	<name>wolscheduler</name>
+	<title>Services/WOL Scheduler</title>
+	<include_file>/usr/local/pkg/wolscheduler.inc</include_file>
+	<addedit_string>[wolscheduler] Host saved.</addedit_string>
+	<delete_string>[wolscheduler] Host deleted.</delete_string>
+	<menu>
+		<name>WOL Scheduler</name>
+		<section>Services</section>
+		<url>/pkg.php?xml=wolscheduler.xml</url>
+	</menu>
+	<service>
+		<name>wolscheduler</name>
+		<rcfile>wolscheduler.sh</rcfile>
+		<executable>wolscheduler</executable>
+		<description>Wake-on-LAN scheduler and keep-alive</description>
+		<starts_on_sync></starts_on_sync>
+	</service>
+	<tabs>
+		<tab>
+			<text>Hosts</text>
+			<url>/pkg.php?xml=wolscheduler.xml</url>
+			<active/>
+		</tab>
+		<tab>
+			<text>Status</text>
+			<url>/wolscheduler_status.php</url>
+		</tab>
+	</tabs>
+	<adddeleteeditpagefields>
+		<columnitem>
+			<fielddescr>Enabled</fielddescr>
+			<fieldname>enable</fieldname>
+		</columnitem>
+		<columnitem>
+			<fielddescr>Description</fielddescr>
+			<fieldname>descr</fieldname>
+		</columnitem>
+		<columnitem>
+			<fielddescr>MAC</fielddescr>
+			<fieldname>mac</fieldname>
+		</columnitem>
+		<columnitem>
+			<fielddescr>Interface</fielddescr>
+			<fieldname>interface</fieldname>
+		</columnitem>
+		<columnitem>
+			<fielddescr>Schedule (min)</fielddescr>
+			<fieldname>interval</fieldname>
+		</columnitem>
+		<columnitem>
+			<fielddescr>Keep-Alive</fielddescr>
+			<fieldname>keepalive</fieldname>
+		</columnitem>
+		<columnitem>
+			<fielddescr>IP</fielddescr>
+			<fieldname>ipaddr</fieldname>
+		</columnitem>
+	</adddeleteeditpagefields>
+	<fields>
+		<field>
+			<name>Host</name>
+			<type>listtopic</type>
+		</field>
+		<field>
+			<fielddescr>Enable</fielddescr>
+			<fieldname>enable</fieldname>
+			<type>checkbox</type>
+			<description>Enable WOL for this host</description>
+			<default_value>on</default_value>
+		</field>
+		<field>
+			<fielddescr>Description</fielddescr>
+			<fieldname>descr</fieldname>
+			<type>input</type>
+			<size>40</size>
+			<required/>
+			<description>Friendly name (e.g. Office PC).</description>
+		</field>
+		<field>
+			<fielddescr>MAC address</fielddescr>
+			<fieldname>mac</fieldname>
+			<type>input</type>
+			<size>20</size>
+			<required/>
+			<description>Format xx:xx:xx:xx:xx:xx</description>
+		</field>
+		<field>
+			<fielddescr>Interface</fielddescr>
+			<fieldname>interface</fieldname>
+			<type>interfaces_selection</type>
+			<hideinterfaceregex>^wan$|loopback</hideinterfaceregex>
+			<required/>
+			<description>Interface the machine is connected to. The magic packet is sent to the subnet broadcast address of this interface.</description>
+		</field>
+		<field>
+			<fielddescr>Broadcast override</fielddescr>
+			<fieldname>broadcast</fieldname>
+			<type>input</type>
+			<size>20</size>
+			<description>Optional. Leave empty to use the interface subnet broadcast.</description>
+		</field>
+		<field>
+			<fielddescr>UDP port</fielddescr>
+			<fieldname>port</fieldname>
+			<type>input</type>
+			<size>6</size>
+			<default_value>9</default_value>
+			<description>Usually 9 (or 7).</description>
+		</field>
+		<field>
+			<name>Schedule</name>
+			<type>listtopic</type>
+		</field>
+		<field>
+			<fielddescr>Send WOL every (minutes)</fielddescr>
+			<fieldname>interval</fieldname>
+			<type>input</type>
+			<size>8</size>
+			<default_value>0</default_value>
+			<description>Send a magic packet periodically, every N minutes. 0 disables the schedule.</description>
+		</field>
+		<field>
+			<name>Keep-Alive</name>
+			<type>listtopic</type>
+		</field>
+		<field>
+			<fielddescr>Keep-Alive</fielddescr>
+			<fieldname>keepalive</fieldname>
+			<type>checkbox</type>
+			<description>Ping the host continuously; when it stops answering, send WOL repeatedly until it answers again.</description>
+		</field>
+		<field>
+			<fielddescr>Host IP address</fielddescr>
+			<fieldname>ipaddr</fieldname>
+			<type>input</type>
+			<size>20</size>
+			<description>IPv4 address to ping (required for Keep-Alive).</description>
+		</field>
+		<field>
+			<fielddescr>Ping interval (s)</fielddescr>
+			<fieldname>ping_interval</fieldname>
+			<type>input</type>
+			<size>6</size>
+			<default_value>10</default_value>
+			<description>Seconds between pings.</description>
+		</field>
+		<field>
+			<fielddescr>Ping timeout (s)</fielddescr>
+			<fieldname>ping_timeout</fieldname>
+			<type>input</type>
+			<size>6</size>
+			<default_value>2</default_value>
+			<description>Seconds to wait for each reply.</description>
+		</field>
+		<field>
+			<fielddescr>Failures before down</fielddescr>
+			<fieldname>fail_threshold</fieldname>
+			<type>input</type>
+			<size>6</size>
+			<default_value>3</default_value>
+			<description>Consecutive lost pings before the host is considered down.</description>
+		</field>
+		<field>
+			<fielddescr>WOL retry (s)</fielddescr>
+			<fieldname>wol_retry</fieldname>
+			<type>input</type>
+			<size>6</size>
+			<default_value>30</default_value>
+			<description>While the host is down, send WOL every N seconds until it answers.</description>
+		</field>
+	</fields>
+	<custom_php_validation_command>
+		wolscheduler_validate_input($_POST, $input_errors);
+	</custom_php_validation_command>
+	<custom_php_resync_config_command>
+		wolscheduler_resync();
+	</custom_php_resync_config_command>
+	<custom_delete_php_command>
+		wolscheduler_resync();
+	</custom_delete_php_command>
+	<custom_php_deinstall_command>
+		wolscheduler_deinstall();
+	</custom_php_deinstall_command>
+</packagegui>

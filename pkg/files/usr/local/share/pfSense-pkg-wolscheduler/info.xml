@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<pfsensepkgs>
+<package>
+	<name>wolscheduler</name>
+	<descr><![CDATA[Wake-on-LAN scheduler with keep-alive: sends magic packets periodically and/or keeps hosts awake by pinging them and waking them whenever they stop answering.]]></descr>
+	<website>https://github.com/</website>
+	<category>Services</category>
+	<version>%%VERSION%%</version>
+	<configurationfile>wolscheduler.xml</configurationfile>
+	<include_file>/usr/local/pkg/wolscheduler.inc</include_file>
+</package>
+</pfsensepkgs>
