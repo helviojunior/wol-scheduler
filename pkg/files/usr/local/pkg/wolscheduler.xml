@@ -5,12 +5,13 @@
 	<name>wolscheduler</name>
 	<title>Services/WOL Scheduler</title>
 	<include_file>/usr/local/pkg/wolscheduler.inc</include_file>
+	<shortcut_section>wolscheduler</shortcut_section>
 	<addedit_string>[wolscheduler] Host saved.</addedit_string>
 	<delete_string>[wolscheduler] Host deleted.</delete_string>
 	<menu>
 		<name>WOL Scheduler</name>
 		<section>Services</section>
-		<url>/pkg.php?xml=wolscheduler.xml</url>
+		<url>/wolscheduler_status.php</url>
 	</menu>
 	<service>
 		<name>wolscheduler</name>
@@ -21,13 +22,13 @@
 	</service>
 	<tabs>
 		<tab>
+			<text>Status</text>
+			<url>/wolscheduler_status.php</url>
+		</tab>
+		<tab>
 			<text>Hosts</text>
 			<url>/pkg.php?xml=wolscheduler.xml</url>
 			<active/>
-		</tab>
-		<tab>
-			<text>Status</text>
-			<url>/wolscheduler_status.php</url>
 		</tab>
 	</tabs>
 	<adddeleteeditpagefields>
@@ -173,6 +174,9 @@
 			<description>While the host is down, send WOL every N seconds until it answers.</description>
 		</field>
 	</fields>
+	<custom_php_after_head_command>
+		wolscheduler_dhcp_picker();
+	</custom_php_after_head_command>
 	<custom_php_validation_command>
 		wolscheduler_validate_input($_POST, $input_errors);
 	</custom_php_validation_command>

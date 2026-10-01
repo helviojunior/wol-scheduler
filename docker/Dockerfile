@@ -34,7 +34,10 @@ RUN set -eux; \
 FROM debian:bookworm-slim AS build
 
 ARG ARCH=amd64
-ARG VERSION=1.0.0
+# VERSION: shown by `wolscheduler -V` and in info.xml (e.g. 1.2.3 or 1.2.3-dev+abc123)
+# PKG_VERSION: used in the package file name (e.g. 1.2.3 or dev-v1.2.3)
+ARG VERSION=0.0.0-dev
+ARG PKG_VERSION=dev-v0.0.0
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends clang lld make file \
@@ -52,7 +55,7 @@ RUN set -eux; \
       arm64) triple="aarch64-unknown-freebsd14.0" ;; \
     esac; \
     make clean; \
-    make CC=clang \
+    make CC=clang VERSION="$VERSION" \
          CFLAGS="--target=$triple --sysroot=/sysroot -O2" \
          LDFLAGS="--target=$triple --sysroot=/sysroot -fuse-ld=lld -static -s"; \
     file wolscheduler; \
@@ -60,12 +63,12 @@ RUN set -eux; \
 
 # Assemble the package tree: files/ mirrors the pfSense filesystem.
 RUN set -eux; \
-    name="pfSense-pkg-wolscheduler-$VERSION-$ARCH"; \
+    name="pfSense-pkg-wolscheduler-$PKG_VERSION-$ARCH"; \
     out="/out/$name"; \
     mkdir -p "$out/files/usr/local/bin"; \
     cp -R /src/pkg/files/. "$out/files/"; \
     install -m 0755 /src/daemon/wolscheduler "$out/files/usr/local/bin/wolscheduler"; \
-    sed -i "s/%%VERSION%%/$VERSION/g" "$out/files/usr/local/share/pfSense-pkg-wolscheduler/info.xml"; \
+    sed -i "s|%%VERSION%%|$VERSION|g" "$out/files/usr/local/share/pfSense-pkg-wolscheduler/info.xml"; \
     install -m 0755 /src/scripts/install.sh /src/scripts/uninstall.sh "$out/"; \
     cd /out && tar -czf "$name.tar.gz" "$name"; \
     cp /src/daemon/wolscheduler "/out/wolscheduler-$ARCH"

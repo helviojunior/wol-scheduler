@@ -174,9 +174,207 @@ function wolscheduler_status() {
 			'last_wol' => (int)$f[5],
 			'wol_count' => (int)$f[6],
 			'next_wol' => (int)$f[7],
+			'fails' => isset($f[8]) ? (int)$f[8] : null,
+			'fail_threshold' => isset($f[9]) ? (int)$f[9] : null,
 		);
 	}
 	return $rows;
+}
+
+/* IPv4 subnets of the configured interfaces: [{if, net, bits}] */
+function wolscheduler_interface_subnets() {
+	$subnets = array();
+	foreach (array_keys(get_configured_interface_with_descr()) as $if) {
+		$ifip = get_interface_ip($if);
+		$bits = get_interface_subnet($if);
+		if (is_ipaddrv4($ifip) && is_numericint($bits)) {
+			$subnets[] = array('if' => $if, 'net' => gen_subnet($ifip, $bits), 'bits' => (int)$bits);
+		}
+	}
+	return $subnets;
+}
+
+/* Configured interface whose IPv4 subnet contains $ip, or '' if none. */
+function wolscheduler_ip_interface($ip, $subnets = null) {
+	foreach ($subnets ?? wolscheduler_interface_subnets() as $s) {
+		if (ip_in_subnet($ip, "{$s['net']}/{$s['bits']}")) {
+			return $s['if'];
+		}
+	}
+	return '';
+}
+
+/*
+ * DHCP leases and static mappings, one entry per MAC (static mapping wins,
+ * then the active lease), sorted by name.
+ */
+function wolscheduler_dhcp_leases() {
+	require_once("system.inc");
+
+	$ifdescr = get_configured_interface_with_descr();
+	$subnets = wolscheduler_interface_subnets();
+	$leases = system_get_dhcpleases(false);	/* false: no reverse DNS lookups */
+	$rank = array('static' => 0, 'active' => 1);
+	$bymac = array();
+
+	foreach ($leases['lease'] as $l) {
+		if (empty($l['mac']) || !is_macaddr($l['mac']) || !is_ipaddrv4($l['ip'])) {
+			continue;
+		}
+		$mac = strtolower($l['mac']);
+		$if = !empty($l['if']) ? $l['if'] : wolscheduler_ip_interface($l['ip'], $subnets);
+		$static = ($l['type'] == gettext("static"));
+		$state = $static ? 'static' : (($l['act'] == gettext("active")) ? 'active' : 'other');
+		$entry = array(
+			'mac' => $mac,
+			'ip' => $l['ip'],
+			'name' => !empty($l['hostname']) ? $l['hostname'] : (string)$l['descr'],
+			'if' => $if,
+			'ifdescr' => isset($ifdescr[$if]) ? $ifdescr[$if] : strtoupper($if),
+			'state' => $state,
+			'online' => ($l['online'] == gettext("active")),	/* host is in the ARP table */
+		);
+		$r = isset($rank[$state]) ? $rank[$state] : 2;
+		if (!isset($bymac[$mac]) || $r < $bymac[$mac]['_rank']) {
+			$entry['_rank'] = $r;
+			$bymac[$mac] = $entry;
+		}
+	}
+
+	$list = array_values($bymac);
+	foreach ($list as &$e) {
+		unset($e['_rank']);
+	}
+	unset($e);
+	/* Grouped by interface (unknown subnet last), then by name */
+	usort($list, function ($a, $b) {
+		if ($a['ifdescr'] !== $b['ifdescr']) {
+			if ($a['ifdescr'] === '' || $b['ifdescr'] === '') {
+				return ($a['ifdescr'] === '') ? 1 : -1;
+			}
+			return strcasecmp($a['ifdescr'], $b['ifdescr']);
+		}
+		return strcasecmp($a['name'] ?: $a['ip'], $b['name'] ?: $b['ip']);
+	});
+	return $list;
+}
+
+/*
+ * Host edit page (pkg_edit.php, custom_php_after_head_command): adds a
+ * "DHCP lease" selector that fills MAC, interface, IP and description, and
+ * fills interface/IP when a known MAC is typed. Manual entry (no lease) works
+ * the same way: typing the host IP selects the interface whose subnet has it.
+ */
+function wolscheduler_dhcp_picker() {
+	$jflags = JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT;
+	$json = json_encode(wolscheduler_dhcp_leases(), $jflags);
+	$subnets = json_encode(wolscheduler_interface_subnets(), $jflags);
+	$label = json_encode(gettext("DHCP lease"));
+	$placeholder = json_encode(gettext("Select to auto-fill..."));
+	$help = json_encode(gettext("Fills MAC, interface, host IP and description from a DHCP lease or static mapping."));
+	$none = json_encode(gettext("No DHCP leases found - fill in the fields below manually."));
+	echo <<<EOT
+<script type="text/javascript">
+//<![CDATA[
+events.push(function() {
+	var leases = {$json};
+	var subnets = {$subnets};
+	var \$mac = $('#mac');
+	if (!\$mac.length) {
+		return;
+	}
+
+	function apply(l, overwrite) {
+		if (overwrite || !\$mac.val()) {
+			\$mac.val(l.mac);
+		}
+		if (l.if && $('#interface option[value="' + l.if + '"]').length) {
+			$('#interface').val(l.if).trigger('change');
+		}
+		if (overwrite || !$('#ipaddr').val()) {
+			$('#ipaddr').val(l.ip);
+		}
+		if (!$('#descr').val() && l.name) {
+			$('#descr').val(l.name);
+		}
+	}
+
+	var \$sel = $('<select class="form-control" id="wolsched_lease"></select>');
+	\$sel.append($('<option value=""></option>').text(leases.length ? {$placeholder} : {$none}));
+	var groups = {};
+	$.each(leases, function(i, l) {
+		var g = l.ifdescr || '-';
+		if (!groups[g]) {
+			groups[g] = $('<optgroup></optgroup>').attr('label', g);
+			\$sel.append(groups[g]);
+		}
+		var text = (l.name ? l.name + ' - ' : '') + l.ip + ' - ' + l.mac +
+		    ' (' + l.state + (l.online ? ', online' : '') + ')';
+		groups[g].append($('<option></option>').val(i).text(text));
+	});
+	if (!leases.length) {
+		\$sel.prop('disabled', true);
+	}
+	\$sel.on('change', function() {
+		if (this.value !== '') {
+			apply(leases[this.value], true);
+		}
+	});
+
+	var \$row = $('<div class="form-group"></div>')
+	    .append($('<label class="col-sm-2 control-label"></label>').append($('<span></span>').text({$label})))
+	    .append($('<div class="col-sm-10"></div>').append(\$sel)
+	        .append($('<span class="help-block"></span>').text({$help})));
+	\$mac.closest('.form-group').before(\$row);
+
+	/* Typed/pasted MAC: fill interface and IP from the matching lease */
+	\$mac.on('change', function() {
+		var mac = $.trim(this.value).toLowerCase().replace(/-/g, ':');
+		if (/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac)) {
+			this.value = mac;
+		}
+		$.each(leases, function(i, l) {
+			if (l.mac === mac) {
+				apply(l, false);
+				return false;
+			}
+		});
+	});
+
+	/* Typed host IP (with or without a lease): select the interface of its subnet */
+	function ip2int(ip) {
+		var p = $.trim(ip).split('.');
+		if (p.length !== 4) {
+			return null;
+		}
+		var n = 0;
+		for (var i = 0; i < 4; i++) {
+			if (!/^[0-9]{1,3}$/.test(p[i]) || +p[i] > 255) {
+				return null;
+			}
+			n = n * 256 + (+p[i]);
+		}
+		return n;
+	}
+	$('#ipaddr').on('change', function() {
+		var ip = ip2int(this.value);
+		if (ip === null) {
+			return;
+		}
+		$.each(subnets, function(i, s) {
+			var size = Math.pow(2, 32 - s.bits);
+			var net = ip2int(s.net);
+			if (net !== null && ip >= net && ip < net + size &&
+			    $('#interface option[value="' + s.if + '"]').length) {
+				$('#interface').val(s.if).trigger('change');
+				return false;
+			}
+		});
+	});
+});
+//]]>
+</script>
+EOT;
 }
 
 /* Send a magic packet right now (used by the Status page). */

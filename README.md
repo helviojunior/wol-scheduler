@@ -1,140 +1,184 @@
-# WOL Scheduler para pfSense
+# WOL Scheduler for pfSense
 
-Pacote para pfSense que agenda o envio de pacotes **Wake-on-LAN** e mantém máquinas
-ligadas com um **Keep-Alive**: o pfSense pinga a máquina continuamente e, se ela parar
-de responder, envia WOL a cada 30 segundos (configurável) até ela voltar.
+A pfSense package that schedules **Wake-on-LAN** packets and keeps machines awake with a
+**Keep-Alive** mode: pfSense pings the machine continuously and, if it stops answering,
+sends WOL every 30 seconds (configurable) until it comes back.
 
-- Daemon em C (`wolscheduler`), binário estático para FreeBSD, cross-compilado via Docker.
-- Interface web integrada ao pfSense em **Services > WOL Scheduler**.
-- Testado contra o código do **pfSense CE 2.7.0** (FreeBSD 14.0, PHP 8.2).
+- C daemon (`wolscheduler`), a static FreeBSD binary cross-compiled with Docker.
+- Web GUI integrated into pfSense under **Services > WOL Scheduler**.
+- Written against the **pfSense CE 2.7.0** sources (FreeBSD 14.0, PHP 8.2).
 
-## Funcionalidades
+## Features
 
-| Recurso | Descrição |
+| Feature | Description |
 |---|---|
-| **Agendamento** | Envia o magic packet a cada *N* minutos para cada host (0 = desligado). |
-| **Keep-Alive** | Ping a cada *X* s; após *N* falhas seguidas o host é marcado como `down` e recebe WOL a cada 30 s até responder. |
-| **Status** | Aba com estado de cada host (up/down), último ping respondido, último WOL e contador. Atualiza a cada 10 s. |
-| **Wake now** | Botão na aba Status para enviar WOL imediatamente. |
-| **Logs** | Eventos vão para o syslog: **Status > System Logs > General**. |
+| **Schedule** | Sends the magic packet to each host every *N* minutes (0 = off). |
+| **Keep-Alive** | Pings every *X* s; after *N* consecutive failures the host is marked `down` and receives WOL every 30 s until it answers. |
+| **Status** | Default tab: each host's state (up/down), lost pings, last ping reply, last WOL and WOL counter. Refreshes every 10 s. |
+| **Wake now** | Button on the Status tab to send a WOL immediately. |
+| **Service control** | Restart / stop (or start) buttons and a log shortcut in the page title bar, like the built-in services. |
+| **Logs** | Events go to syslog: **Status > System Logs > General**. |
 
-## Estrutura
+## Layout
 
 ```
-daemon/              Código C do daemon + Makefile
-docker/Dockerfile    Cross-compilação (clang + sysroot FreeBSD 14.0) e empacotamento
-pkg/files/           Arquivos do pacote, espelhando o filesystem do pfSense
-  usr/local/pkg/wolscheduler.xml          Definição da GUI (campos, menu, serviço)
-  usr/local/pkg/wolscheduler.inc          Validação, geração de config, controle do serviço
-  usr/local/www/wolscheduler_status.php   Página de status
-  usr/local/share/pfSense-pkg-wolscheduler/info.xml   Registro do pacote
-  etc/inc/priv/wolscheduler.priv.inc      Privilégio de acesso à GUI
-scripts/             install.sh / uninstall.sh (rodam no pfSense)
+daemon/              Daemon C source + Makefile
+docker/Dockerfile    Cross-compilation (clang + FreeBSD 14.0 sysroot) and packaging
+pkg/files/           Package files, mirroring the pfSense filesystem
+  usr/local/pkg/wolscheduler.xml          GUI definition (fields, menu, service)
+  usr/local/pkg/wolscheduler.inc          Validation, config generation, service control
+  usr/local/pkg/shortcuts/wolscheduler.inc  Title-bar shortcuts (service buttons, log link)
+  usr/local/www/wolscheduler_status.php   Status page
+  usr/local/share/pfSense-pkg-wolscheduler/info.xml   Package registration
+  etc/inc/priv/wolscheduler.priv.inc      GUI access privilege
+scripts/             install.sh / uninstall.sh (run on pfSense), version.sh
+.github/workflows/   release.yml: builds and attaches the package to each GitHub Release
 ```
 
-## 1. Compilar
+## 1. Build
 
-Requisitos: **Docker** e **make** (Linux ou macOS, inclusive Apple Silicon).
+Requirements: **Docker** and **make** (Linux or macOS, Apple Silicon included).
 
 ```sh
-make                  # amd64 (padrão – a maioria dos pfSense em x86)
+make                  # amd64 (default – most x86 pfSense boxes)
 make ARCH=arm64       # Netgate 1100 / 2100 (ARM)
-make package-all      # ambos
+make package-all      # both
 ```
 
-Descubra a arquitetura do seu pfSense com `uname -m` no shell dele
+Find your pfSense architecture by running `uname -m` in its shell
 (`amd64` → `ARCH=amd64`; `arm64` → `ARCH=arm64`).
 
-Os artefatos ficam em `dist/`:
+Build output goes to `dist/`:
 
 ```
-dist/pfSense-pkg-wolscheduler-1.0.0-amd64.tar.gz   pacote para instalar
-dist/wolscheduler-amd64                             binário avulso (debug)
+dist/pfSense-pkg-wolscheduler-dev-v1.2.3-amd64.tar.gz   package to install
+dist/wolscheduler-amd64                                  standalone binary (debugging)
 ```
 
-Na primeira execução o Docker baixa o `base.txz` do FreeBSD 14.0 (~180 MB) para montar
-o sysroot; as execuções seguintes usam cache. Variáveis opcionais:
+On the first run Docker downloads the FreeBSD 14.0 `base.txz` (~180 MB) to build the
+sysroot; later runs use the cache.
+
+### Versioning
+
+The version is **not stored in the repository**: GitHub Releases own it.
+`scripts/version.sh` reads the tag of the latest Release through the GitHub API
+(`/repos/helviojunior/wol-scheduler/releases/latest`), cached in `.cache/latest-release`
+for 24 h (1 h while there is no Release yet; `0.0.0` until the first one).
+
+| Channel | Where | Number | `wolscheduler -V` | Package |
+|---|---|---|---|---|
+| `release` | CI, when a Release is published | the tag | `1.2.3` | `pfSense-pkg-wolscheduler-1.2.3-<arch>.tar.gz` |
+| `dev` | local builds (default) | latest Release | `1.2.3-dev+<commit>` | `pfSense-pkg-wolscheduler-dev-v1.2.3-<arch>.tar.gz` |
 
 ```sh
-make VERSION=1.0.1                                   # versão do pacote
-docker build --build-arg FREEBSD_VERSION=14.0-RELEASE ...   # outra versão do sysroot
+make version                       # show the version a build would get
+WOL_REFRESH_VERSION=1 make version # ignore the cache
+make CHANNEL=release WOL_VERSION=1.2.3   # what the CI does
 ```
 
-O binário é linkado **estaticamente**, então não depende das bibliotecas do pfSense.
+Set `GITHUB_TOKEN` to avoid the API's anonymous rate limit.
 
-### Build nativo (apenas para testes locais)
+### Release pipeline
+
+Publishing a GitHub Release with a tag `vX.Y.Z` (or `X.Y.Z`) runs
+[`.github/workflows/release.yml`](.github/workflows/release.yml), which builds the
+amd64 and arm64 packages for that tag and attaches them (plus `.sha256` files) to
+the Release. To rebuild the assets of an existing Release, use
+**Actions > Release package > Run workflow** and enter the tag.
+
+The binary is **statically** linked, so it does not depend on pfSense's libraries.
+
+### Native build (local testing only)
 
 ```sh
 make native
-./daemon/wolscheduler -w 00:11:22:33:44:55 -b 192.168.1.255   # envia um WOL
+./daemon/wolscheduler -w 00:11:22:33:44:55 -b 192.168.1.255   # send one WOL
 ```
 
-## 2. Instalar no pfSense
+## 2. Install on pfSense
 
-Pré-requisito: acesso SSH habilitado (**System > Advanced > Admin Access > Enable Secure Shell**).
+Prerequisite: SSH access enabled (**System > Advanced > Admin Access > Enable Secure Shell**).
+
+Download the package for your architecture from the
+[Releases page](https://github.com/helviojunior/wol-scheduler/releases) (or build it,
+see above). Straight from the pfSense shell (ssh admin@192.168.1.1, option 8 "Shell"):
 
 ```sh
-# Na sua máquina
-scp dist/pfSense-pkg-wolscheduler-1.0.0-amd64.tar.gz admin@192.168.1.1:/tmp/
-
-# No pfSense (ssh admin@192.168.1.1, opção 8 "Shell")
 cd /tmp
-tar -xzf pfSense-pkg-wolscheduler-1.0.0-amd64.tar.gz
-cd pfSense-pkg-wolscheduler-1.0.0-amd64
+fetch https://github.com/helviojunior/wol-scheduler/releases/download/v1.2.3/pfSense-pkg-wolscheduler-1.2.3-amd64.tar.gz
+tar -xzf pfSense-pkg-wolscheduler-1.2.3-amd64.tar.gz
+cd pfSense-pkg-wolscheduler-1.2.3-amd64
 sh install.sh
 ```
 
-O `install.sh`:
+Or copy a local build: `scp dist/pfSense-pkg-wolscheduler-*-amd64.tar.gz admin@192.168.1.1:/tmp/`.
 
-1. verifica se o binário roda nessa arquitetura;
-2. copia os arquivos para `/usr/local/...` e `/etc/inc/priv/`;
-3. registra o pacote com `/etc/rc.packages pfSense-pkg-wolscheduler POST-INSTALL`,
-   o mesmo mecanismo usado pelos pacotes oficiais (cria menu, serviço e entrada no `config.xml`).
+`install.sh`:
 
-Para **atualizar**, basta repetir o processo com o tarball novo. Os hosts cadastrados são mantidos.
+1. checks that the binary runs on this architecture;
+2. copies the files to `/usr/local/...` and `/etc/inc/priv/`;
+3. registers the package with `/etc/rc.packages pfSense-pkg-wolscheduler POST-INSTALL`,
+   the same mechanism official packages use (creates the menu, service and `config.xml` entry).
 
-## 3. Configurar
+To **upgrade**, repeat the steps with the new tarball. The previous registration is
+replaced (so menu and tabs are updated) and configured hosts are kept.
 
-Acesse **Services > WOL Scheduler** e clique em **Add**:
+## 3. Configure
 
-| Campo | Exemplo | Observação |
+Go to **Services > WOL Scheduler**. It opens on the **Status** tab; on the **Hosts** tab
+click **Add**:
+
+| Field | Example | Notes |
 |---|---|---|
 | Enable | ✔ | |
-| Description | PC Escritório | |
+| Description | Office PC | |
 | MAC address | `00:11:22:33:44:55` | |
-| Interface | LAN | O WOL vai para o broadcast da sub-rede dessa interface. |
-| Broadcast override | *(vazio)* | Opcional, ex.: `192.168.1.255`. |
+| Interface | LAN | WOL is sent to this interface's subnet broadcast address. |
+| Broadcast override | *(empty)* | Optional, e.g. `192.168.1.255`. |
 | UDP port | 9 | |
-| Send WOL every (minutes) | 60 | `0` desliga o agendamento. |
+| Send WOL every (minutes) | 60 | `0` disables the schedule. |
 | Keep-Alive | ✔ | |
-| Host IP address | `192.168.1.50` | Obrigatório com Keep-Alive. |
+| Host IP address | `192.168.1.50` | Required for Keep-Alive. |
 | Ping interval (s) | 10 | |
 | Ping timeout (s) | 2 | |
-| Failures before down | 3 | Pings perdidos seguidos para considerar *down*. |
-| WOL retry (s) | 30 | Intervalo de WOL enquanto estiver *down*. |
+| Failures before down | 3 | Consecutive lost pings before the host is considered *down*. |
+| WOL retry (s) | 30 | WOL interval while the host is *down*. |
 
-Ao salvar, o pacote gera `/usr/local/etc/wolscheduler.conf` e recarrega o daemon (SIGHUP),
-sem perder o estado dos hosts. O serviço aparece em **Status > Services** como `wolscheduler`
-e sobe automaticamente no boot. Ele só fica rodando se houver pelo menos um host habilitado
-com agendamento ou Keep-Alive.
+**DHCP lease auto-fill:** the edit page has a **DHCP lease** selector (above the MAC field)
+listing the DHCP leases and static mappings, grouped by interface. Picking one fills the MAC
+address, interface, host IP address and description (description only when empty). Typing or
+pasting a MAC that has a lease also fills the interface and, when empty, the host IP. The
+interface of a dynamic lease is the one whose subnet contains the lease IP.
 
-A aba **Status** mostra o estado em tempo real e tem o botão **Wake now**.
+**Manual entry** (no lease, or a host outside DHCP) works the same way: fill in the fields by
+hand; typing the host IP selects the interface whose subnet contains it, and a MAC typed with
+`-` is normalized to `xx:xx:xx:xx:xx:xx`. With no leases at all, the selector is disabled and
+says so.
 
-> **Dica:** se você usar Keep-Alive, configure no host o IP fixo (ou reserva DHCP em
-> **Services > DHCP Server**) e libere ICMP Echo no firewall do sistema operacional
-> (no Windows o ping vem bloqueado por padrão). Caso contrário o host sempre parecerá
-> *down* e receberá WOL a cada 30 s.
+On save, the package writes `/usr/local/etc/wolscheduler.conf` and reloads the daemon
+(SIGHUP) without losing host state. The service shows up in **Status > Services** as
+`wolscheduler` and starts automatically at boot. It only runs when at least one enabled
+host has a schedule or Keep-Alive.
 
-## 4. Desinstalar
+The **Status** tab shows live state and has the **Wake now** button. The icons in the page
+title bar restart / stop the service (or start it when stopped) and open the related
+log entries.
+
+> **Tip:** when using Keep-Alive, give the host a static IP (or a DHCP reservation under
+> **Services > DHCP Server**) and allow ICMP Echo in the operating system's firewall
+> (Windows blocks ping by default). Otherwise the host will always look *down* and
+> receive WOL every 30 s.
+
+## 4. Uninstall
 
 ```sh
-cd /tmp/pfSense-pkg-wolscheduler-1.0.0-amd64
+cd /tmp/pfSense-pkg-wolscheduler-1.2.3-amd64
 sh uninstall.sh
 ```
 
-Remove menu, serviço, entradas do `config.xml` e os arquivos instalados.
+Removes the menu, service, `config.xml` entries and installed files.
 
-## Diagnóstico
+## Troubleshooting
 
 ```sh
 pgrep -l wolscheduler
@@ -142,38 +186,38 @@ cat /usr/local/etc/wolscheduler.conf
 cat /var/run/wolscheduler.status
 grep wolscheduler /var/log/system.log
 
-# Validar o arquivo de configuração
+# Validate the config file
 wolscheduler -t -c /usr/local/etc/wolscheduler.conf
 
-# Rodar em primeiro plano com debug (pare o serviço antes)
+# Run in the foreground with debug logging (stop the service first)
 /usr/local/etc/rc.d/wolscheduler.sh stop
 wolscheduler -f -d
 
-# Enviar um WOL manual
+# Send a manual WOL
 wolscheduler -w 00:11:22:33:44:55 -b 192.168.1.255 -P 9
 ```
 
-### Opções do daemon
+### Daemon options
 
 ```
 wolscheduler [-fd] [-c conf] [-p pidfile] [-s statusfile]
-  -f  primeiro plano (log no stderr)      -d  log de debug
+  -f  foreground (log to stderr)          -d  debug logging
   -c  config  (/usr/local/etc/wolscheduler.conf)
   -p  pidfile (/var/run/wolscheduler.pid)
   -s  status  (/var/run/wolscheduler.status)
-wolscheduler -t [-c conf]                 valida a configuração
-wolscheduler -w MAC [-b broadcast] [-P porta]   envia um WOL e sai
-wolscheduler -V                           versão
+wolscheduler -t [-c conf]                 validate the config
+wolscheduler -w MAC [-b broadcast] [-P port]   send one WOL and exit
+wolscheduler -V                           version
 ```
 
-Sinais: `SIGHUP` recarrega a configuração; `SIGTERM` encerra.
+Signals: `SIGHUP` reloads the config; `SIGTERM` exits.
 
-## Limitações
+## Limitations
 
-- O pacote é instalado fora do repositório oficial, então **não aparece** em
-  *System > Package Manager > Installed Packages* (a GUI e o serviço funcionam normalmente).
-- Após um **upgrade do pfSense**, reinstale o pacote com `install.sh`. A configuração dos
-  hosts fica no `config.xml` e é preservada.
-- Keep-Alive suporta apenas IPv4.
-- WOL só funciona na mesma rede L2 da interface escolhida (é broadcast). A placa de rede
-  da máquina precisa ter WOL habilitado na BIOS/UEFI e no sistema operacional.
+- The package is installed outside the official repository, so it **does not appear** under
+  *System > Package Manager > Installed Packages* (the GUI and service work normally).
+- After a **pfSense upgrade**, reinstall the package with `install.sh`. Host settings live
+  in `config.xml` and are preserved.
+- Keep-Alive supports IPv4 only.
+- WOL only works on the same L2 network as the selected interface (it is a broadcast). The
+  machine's NIC must have WOL enabled in the BIOS/UEFI and in the operating system.

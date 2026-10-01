@@ -3,8 +3,14 @@
 
 CC      ?= cc
 CFLAGS  ?= -O2
-CFLAGS  += -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -D__BSD_VISIBLE=1
 LDFLAGS ?=
+VERSION ?=
+
+# `override` so these are kept when CFLAGS is given on the command line.
+override CFLAGS += -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -D__BSD_VISIBLE=1
+ifneq ($(VERSION),)
+override CFLAGS += -DVERSION='"$(VERSION)"'
+endif
 
 PROG = wolscheduler
 

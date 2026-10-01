@@ -1,2 +1,3 @@
 dist/
 daemon/wolscheduler
+.cache/

@@ -48,7 +48,9 @@
 #include <time.h>
 #include <unistd.h>
 
-#define VERSION            "1.0.0"
+#ifndef VERSION
+#define VERSION            "0.0.0-dev"     /* set by the build (Makefile) */
+#endif
 #define DEFAULT_CONF       "/usr/local/etc/wolscheduler.conf"
 #define DEFAULT_PIDFILE    "/var/run/wolscheduler.pid"
 #define DEFAULT_STATUSFILE "/var/run/wolscheduler.status"
@@ -278,6 +280,9 @@ host_up(struct host *h)
 	if (h->state != ST_UP)
 		logmsg(LOG_NOTICE, "host %s (%s) is UP", h->name,
 		    inet_ntoa(h->ip));
+	else if (h->fails > 0)
+		logmsg(LOG_INFO, "reply from %s after %d lost ping(s), "
+		    "counter reset", h->name, h->fails);
 	h->state = ST_UP;
 	h->fails = 0;
 	h->ping_pending = 0;
@@ -469,28 +474,40 @@ apply_config(void)
 	if (load_config(conf_path, fresh, &n) < 0)
 		return;
 
-	/* keep runtime state for hosts that did not change identity */
+	/*
+	 * Keep runtime state for hosts that did not change identity, so that
+	 * saving the config in the GUI does not reset ping/WOL timers (which
+	 * would send an extra ping and an immediate WOL to hosts that are down).
+	 */
 	for (i = 0; i < n; i++) {
 		struct host *h = &fresh[i];
 
+		h->next_ping = now;
+		h->next_retry_wol = now;
 		for (j = 0; j < nhosts; j++) {
-			if (memcmp(hosts[j].mac, h->mac, 6) == 0 &&
-			    hosts[j].ip.s_addr == h->ip.s_addr) {
-				h->state = hosts[j].state;
-				h->fails = hosts[j].fails;
-				h->last_reply = hosts[j].last_reply;
-				h->last_wol = hosts[j].last_wol;
-				h->wol_count = hosts[j].wol_count;
-				if (hosts[j].interval == h->interval)
-					h->next_wol = hosts[j].next_wol;
-				break;
+			struct host *o = &hosts[j];
+
+			if (memcmp(o->mac, h->mac, 6) != 0 ||
+			    o->ip.s_addr != h->ip.s_addr)
+				continue;
+			h->last_wol = o->last_wol;
+			h->wol_count = o->wol_count;
+			if (o->interval == h->interval)
+				h->next_wol = o->next_wol;
+			if (o->keepalive && h->keepalive) {
+				h->state = o->state;
+				h->fails = o->fails;
+				h->last_reply = o->last_reply;
+				h->next_ping = o->next_ping;
+				h->ping_pending = o->ping_pending;
+				h->ping_sent = o->ping_sent;
+				h->ping_seq = o->ping_seq;
+				h->next_retry_wol = o->next_retry_wol;
 			}
+			break;
 		}
 		if (h->interval > 0 && h->next_wol == 0)
 			h->next_wol = now + h->interval;
-		h->next_ping = now;
-		h->next_retry_wol = now;
-		h->ping_pending = 0;
 	}
 	memcpy(hosts, fresh, sizeof(struct host) * n);
 	nhosts = n;
@@ -537,15 +554,15 @@ write_status(void)
 	if ((f = fopen(tmp, "w")) == NULL)
 		return;
 	fprintf(f, "# name\tmac\tip\tstate\tlast_reply\tlast_wol\twol_count"
-	    "\tnext_wol\n");
+	    "\tnext_wol\tfails\tfail_threshold\n");
 	for (i = 0; i < nhosts; i++) {
 		struct host *h = &hosts[i];
 
-		fprintf(f, "%s\t%s\t%s\t%s\t%ld\t%ld\t%lu\t%ld\n", h->name,
-		    mac_str(h->mac),
+		fprintf(f, "%s\t%s\t%s\t%s\t%ld\t%ld\t%lu\t%ld\t%d\t%d\n",
+		    h->name, mac_str(h->mac),
 		    h->keepalive ? inet_ntoa(h->ip) : "-", state_str(h),
 		    (long)h->last_reply, (long)h->last_wol, h->wol_count,
-		    (long)h->next_wol);
+		    (long)h->next_wol, h->fails, h->fail_threshold);
 	}
 	fclose(f);
 	rename(tmp, status_path);
@@ -575,13 +592,15 @@ tick(void)
 		if (h->ping_pending && now - h->ping_sent >= h->ping_timeout) {
 			h->ping_pending = 0;
 			h->fails++;
-			logmsg(LOG_DEBUG, "ping timeout %s (%d/%d)", h->name,
-			    h->fails, h->fail_threshold);
+			if (h->state != ST_DOWN)
+				logmsg(LOG_INFO, "ping to %s lost (%d/%d)",
+				    h->name, h->fails, h->fail_threshold);
 			if (h->fails >= h->fail_threshold &&
 			    h->state != ST_DOWN) {
-				logmsg(LOG_WARNING, "host %s (%s) is DOWN, "
-				    "sending WOL every %ds", h->name,
-				    inet_ntoa(h->ip), h->wol_retry);
+				logmsg(LOG_WARNING, "host %s (%s) is DOWN after "
+				    "%d lost pings, sending WOL every %ds",
+				    h->name, inet_ntoa(h->ip), h->fails,
+				    h->wol_retry);
 				h->state = ST_DOWN;
 				h->next_retry_wol = now;
 			}

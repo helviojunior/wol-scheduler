@@ -1,3 +1,4 @@
 .git
 dist
 daemon/wolscheduler
+.cache

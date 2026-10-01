@@ -42,7 +42,8 @@ foreach (wolscheduler_status() as $row) {
 $running = is_process_running("wolscheduler");
 
 $pgtitle = array(gettext("Services"), gettext("WOL Scheduler"), gettext("Status"));
-$pglinks = array("", "/pkg.php?xml=wolscheduler.xml", "@self");
+$pglinks = array("", "@self", "@self");
+$shortcut_section = "wolscheduler";
 include("head.inc");
 
 if ($savemsg) {
@@ -50,8 +51,8 @@ if ($savemsg) {
 }
 
 $tab_array = array();
-$tab_array[] = array(gettext("Hosts"), false, "/pkg.php?xml=wolscheduler.xml");
 $tab_array[] = array(gettext("Status"), true, "/wolscheduler_status.php");
+$tab_array[] = array(gettext("Hosts"), false, "/pkg.php?xml=wolscheduler.xml");
 display_top_tabs($tab_array);
 ?>
 
@@ -74,9 +75,10 @@ display_top_tabs($tab_array);
 					<th><?=gettext("MAC")?></th>
 					<th><?=gettext("IP")?></th>
 					<th><?=gettext("State")?></th>
+					<th><?=gettext("Lost pings")?></th>
 					<th><?=gettext("Last reply")?></th>
 					<th><?=gettext("Last WOL")?></th>
-					<th><?=gettext("WOLs sent")?></th>
+					<th><?=gettext("WOLs sent (total)")?></th>
 					<th><?=gettext("Next scheduled WOL")?></th>
 					<th><?=gettext("Actions")?></th>
 				</tr>
@@ -98,6 +100,7 @@ display_top_tabs($tab_array);
 					<td><?=htmlspecialchars($h['mac'])?></td>
 					<td><?=htmlspecialchars($ip)?></td>
 					<td><span class="label <?=$badge?>"><?=htmlspecialchars($state)?></span></td>
+					<td><?=($st && $ip != '-' && $st['fails'] !== null) ? "{$st['fails']}/{$st['fail_threshold']}" : '-'?></td>
 					<td><?=$st ? wolsched_fmt_time($st['last_reply']) : '-'?></td>
 					<td><?=$st ? wolsched_fmt_time($st['last_wol']) : '-'?></td>
 					<td><?=$st ? $st['wol_count'] : '-'?></td>
@@ -113,7 +116,7 @@ display_top_tabs($tab_array);
 				</tr>
 <?php endforeach; ?>
 <?php if (empty($hosts)): ?>
-				<tr><td colspan="9"><?=gettext("No hosts configured.")?></td></tr>
+				<tr><td colspan="10"><?=gettext("No hosts configured.")?></td></tr>
 <?php endif; ?>
 			</tbody>
 		</table>

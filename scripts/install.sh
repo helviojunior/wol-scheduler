@@ -33,6 +33,14 @@ fi
 # Stop a running instance before replacing the binary (upgrade).
 [ -x "$RC" ] && "$RC" stop >/dev/null 2>&1 || true
 
+# Upgrade: drop the previous registration (menu, service, package entry) so
+# the new one replaces it; pfSense never overwrites an existing menu entry.
+# Host settings (installedpackages/wolscheduler) are kept.
+if [ -f "$SHARE/info.xml" ] && [ -f /usr/local/pkg/wolscheduler.xml ]; then
+	echo "==> Removing previous registration"
+	/usr/local/bin/php -f /etc/rc.packages ${PKG} POST-DEINSTALL >/dev/null || true
+fi
+
 echo "==> Copying files"
 (cd files && find . -type f | sed 's|^\.||') > /tmp/${PKG}.files
 # Only regular files are archived so existing system directories keep their modes.
