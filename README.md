@@ -6,7 +6,7 @@ sends WOL every 30 seconds (configurable) until it comes back.
 
 - C daemon (`wolscheduler`), a static FreeBSD binary cross-compiled with Docker.
 - Web GUI integrated into pfSense under **Services > WOL Scheduler**.
-- Written against the **pfSense CE 2.7.0** sources (FreeBSD 14.0, PHP 8.2).
+- Compatible with **pfSense CE 2.7.0 through 2.9.x** (see [Compatibility](#compatibility)).
 
 ## Features
 
@@ -144,15 +144,17 @@ click **Add**:
 | Failures before down | 3 | Consecutive lost pings before the host is considered *down*. |
 | WOL retry (s) | 30 | WOL interval while the host is *down*. |
 
-**DHCP lease auto-fill:** the edit page has a **DHCP lease** selector (above the MAC field)
-listing the DHCP leases and static mappings, grouped by interface. Picking one fills the MAC
-address, interface, host IP address and description (description only when empty). Typing or
-pasting a MAC that has a lease also fills the interface and, when empty, the host IP. The
-interface of a dynamic lease is the one whose subnet contains the lease IP.
+**DHCP lease auto-fill:** the edit page has a **DHCP lease** search field (above the MAC
+field). Start typing part of a MAC (`a8:a1`, `a8-a1` or `a8a1`), hostname, description, IP or
+interface name and matching DHCP leases and static mappings show up; every typed word must
+match. Picking one fills the MAC address, interface, host IP address and description
+(description only when empty). Typing or pasting a MAC that has a lease directly in the MAC
+field also fills the interface and, when empty, the host IP. The interface of a dynamic lease
+is the one whose subnet contains the lease IP.
 
 **Manual entry** (no lease, or a host outside DHCP) works the same way: fill in the fields by
 hand; typing the host IP selects the interface whose subnet contains it, and a MAC typed with
-`-` is normalized to `xx:xx:xx:xx:xx:xx`. With no leases at all, the selector is disabled and
+`-` is normalized to `xx:xx:xx:xx:xx:xx`. With no leases at all, the search field is disabled and
 says so.
 
 On save, the package writes `/usr/local/etc/wolscheduler.conf` and reloads the daemon
@@ -211,6 +213,34 @@ wolscheduler -V                           version
 ```
 
 Signals: `SIGHUP` reloads the config; `SIGTERM` exits.
+
+## Compatibility
+
+| pfSense CE | FreeBSD | PHP | jQuery / jQuery UI | DHCP backends |
+|---|---|---|---|---|
+| 2.7.0 – 2.7.2 | 14.0 | 8.2 | 3.5.1 / 1.12.1 | ISC (Kea preview from 2.7.1) |
+| 2.8.x | 15-CURRENT | 8.3 | — | ISC, Kea |
+| 2.9.x | 16-CURRENT | 8.4 / 8.5 | 3.7.1 / 1.13.2 | ISC, Kea |
+
+How each layer stays compatible:
+
+- **Daemon:** one static binary built against FreeBSD 14.0. pfSense kernels (amd64 and arm64)
+  keep `COMPAT_FREEBSD14`, so the same binary runs on 14, 15 and 16.
+- **PHP:** only functions present from 2.7.0 to 2.9 are used. Where 2.9 deprecates something
+  the package adapts: `logger()` is used when it exists (falls back to `log_error()` on 2.7.x),
+  and `is_platform_booting()` replaces `platform_booting()`. Host entries are normalized, so
+  missing fields never raise PHP 8 warnings.
+- **DHCP leases:** read through `system_get_dhcpleases()`, which returns ISC or Kea leases
+  depending on the configured backend. Both "online" markers (`active` on 2.7.0,
+  `active/online` on newer versions and Kea) are recognized.
+- **GUI:** the autocomplete uses the jQuery UI bundled with pfSense (1.12 and 1.13 have the
+  same API); no deprecated jQuery helpers (`$.trim`) are used; icons use classes present in
+  both FontAwesome 5 (2.7) and 6 (2.9).
+
+This was checked against the pfSense sources of 2.7.0 and of the current development branch
+(2.9), and the PHP code was exercised on PHP 8.2–8.5 with pfSense functions stubbed. Netgate
+does not publish 2.8 branches on GitHub; its release notes list no changes affecting the APIs
+used here.
 
 ## Limitations
 

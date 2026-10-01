@@ -4,6 +4,10 @@
  *
  * Glue between the pfSense GUI and the wolscheduler daemon: validates input,
  * renders /usr/local/etc/wolscheduler.conf and manages the service.
+ *
+ * Compatible with pfSense CE 2.7.0 through 2.9.x (PHP 8.2 - 8.5): only uses
+ * functions present in all of them, and falls back where newer ones exist
+ * (logger() does not exist in 2.7.x; log_error() is deprecated in 2.9).
  */
 
 require_once("config.inc");
@@ -17,11 +21,44 @@ define('WOLSCHED_CONF', '/usr/local/etc/wolscheduler.conf');
 define('WOLSCHED_PID', '/var/run/wolscheduler.pid');
 define('WOLSCHED_STATUS', '/var/run/wolscheduler.status');
 
+/*
+ * Every field of a host entry, so missing keys (e.g. an unchecked checkbox is
+ * not saved at all) never raise "Undefined array key" warnings on PHP 8.
+ */
+function wolscheduler_normalize($host) {
+	static $fields = array('enable', 'descr', 'mac', 'interface', 'broadcast',
+	    'port', 'interval', 'keepalive', 'ipaddr', 'ping_interval',
+	    'ping_timeout', 'fail_threshold', 'wol_retry');
+
+	$host = is_array($host) ? $host : array();
+	foreach ($fields as $f) {
+		if (!isset($host[$f]) || is_array($host[$f])) {
+			$host[$f] = '';
+		}
+	}
+	return $host;
+}
+
 function wolscheduler_hosts() {
-	return config_get_path('installedpackages/wolscheduler/config', []);
+	$hosts = config_get_path('installedpackages/wolscheduler/config', []);
+	if (!is_array($hosts)) {
+		return array();	/* an empty <config/> element reads back as a string */
+	}
+	return array_map('wolscheduler_normalize', $hosts);
+}
+
+/* syslog with a priority: logger() where it exists, log_error() on 2.7.x */
+function wolscheduler_log($priority, $message) {
+	$message = "[wolscheduler] {$message}";
+	if (function_exists('logger')) {
+		logger($priority, $message);
+	} else {
+		log_error($message);
+	}
 }
 
 function wolscheduler_validate_input($post, &$input_errors) {
+	$post = wolscheduler_normalize($post);
 	if (!is_macaddr($post['mac'])) {
 		$input_errors[] = gettext("A valid MAC address is required (xx:xx:xx:xx:xx:xx).");
 	}
@@ -34,7 +71,7 @@ function wolscheduler_validate_input($post, &$input_errors) {
 	if ($post['interval'] !== '' && !is_numericint($post['interval'])) {
 		$input_errors[] = gettext("Schedule interval must be a non-negative integer (minutes).");
 	}
-	if ($post['keepalive'] && !is_ipaddrv4($post['ipaddr'])) {
+	if (!empty($post['keepalive']) && !is_ipaddrv4($post['ipaddr'])) {
 		$input_errors[] = gettext("Keep-Alive requires a valid IPv4 host address.");
 	}
 	$ranges = array(
@@ -44,7 +81,7 @@ function wolscheduler_validate_input($post, &$input_errors) {
 		'wol_retry'      => array(1, 86400, gettext("WOL retry")),
 	);
 	foreach ($ranges as $key => $r) {
-		if ($post[$key] === '' || !isset($post[$key])) {
+		if ($post[$key] === '') {
 			continue;
 		}
 		if (!is_numericint($post[$key]) || $post[$key] < $r[0] || $post[$key] > $r[1]) {
@@ -59,6 +96,7 @@ function wolscheduler_validate_input($post, &$input_errors) {
 
 /* Broadcast address for a host entry: override, or the interface subnet broadcast. */
 function wolscheduler_broadcast($host) {
+	$host = wolscheduler_normalize($host);
 	if (!empty($host['broadcast']) && is_ipaddrv4($host['broadcast'])) {
 		return $host['broadcast'];
 	}
@@ -71,7 +109,7 @@ function wolscheduler_broadcast($host) {
 }
 
 function wolscheduler_intval($value, $default) {
-	return (isset($value) && is_numericint($value)) ? (int)$value : $default;
+	return is_numericint($value) ? (int)$value : $default;
 }
 
 function wolscheduler_write_config() {
@@ -89,7 +127,7 @@ function wolscheduler_write_config() {
 		}
 		$bcast = wolscheduler_broadcast($host);
 		if ($bcast === null) {
-			log_error(sprintf("[wolscheduler] Cannot determine broadcast for %s on %s, skipping.",
+			wolscheduler_log(LOG_ERR, sprintf("Cannot determine broadcast for %s on %s, skipping.",
 			    $host['descr'], $host['interface']));
 			continue;
 		}
@@ -137,7 +175,7 @@ function wolscheduler_resync() {
 
 	if (isvalidpid(WOLSCHED_PID)) {
 		sigkillbypid(WOLSCHED_PID, "HUP");
-	} elseif (!platform_booting()) {
+	} elseif (!is_platform_booting()) {	/* platform_booting() is deprecated in 2.9 */
 		start_service("wolscheduler");
 	} else {
 		/* At boot, rc.start_packages starts the service itself. */
@@ -157,8 +195,9 @@ function wolscheduler_status() {
 	if (!file_exists(WOLSCHED_STATUS)) {
 		return $rows;
 	}
-	foreach (file(WOLSCHED_STATUS, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
-		if ($line[0] == '#') {
+	$lines = @file(WOLSCHED_STATUS, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+	foreach (($lines === false) ? array() : $lines as $line) {
+		if ($line === '' || $line[0] == '#') {
 			continue;
 		}
 		$f = explode("\t", $line);
@@ -217,22 +256,28 @@ function wolscheduler_dhcp_leases() {
 	$rank = array('static' => 0, 'active' => 1);
 	$bymac = array();
 
-	foreach ($leases['lease'] as $l) {
+	foreach ((is_array($leases['lease'] ?? null) ? $leases['lease'] : array()) as $l) {
+		if (!is_array($l)) {
+			continue;
+		}
 		if (empty($l['mac']) || !is_macaddr($l['mac']) || !is_ipaddrv4($l['ip'])) {
 			continue;
 		}
 		$mac = strtolower($l['mac']);
 		$if = !empty($l['if']) ? $l['if'] : wolscheduler_ip_interface($l['ip'], $subnets);
-		$static = ($l['type'] == gettext("static"));
-		$state = $static ? 'static' : (($l['act'] == gettext("active")) ? 'active' : 'other');
+		$static = (($l['type'] ?? '') == gettext("static"));
+		$state = $static ? 'static' : ((($l['act'] ?? '') == gettext("active")) ? 'active' : 'other');
 		$entry = array(
 			'mac' => $mac,
 			'ip' => $l['ip'],
-			'name' => !empty($l['hostname']) ? $l['hostname'] : (string)$l['descr'],
+			'name' => !empty($l['hostname']) ? $l['hostname'] : (string)($l['descr'] ?? ''),
+			'hostname' => (string)($l['hostname'] ?? ''),
+			'descr' => (string)($l['descr'] ?? ''),	/* static mappings only */
 			'if' => $if,
 			'ifdescr' => isset($ifdescr[$if]) ? $ifdescr[$if] : strtoupper($if),
 			'state' => $state,
-			'online' => ($l['online'] == gettext("active")),	/* host is in the ARP table */
+			/* host is in the ARP table: "active" on 2.7.0, "active/online" on 2.8+ and Kea */
+			'online' => in_array($l['online'] ?? '', array(gettext("active"), gettext("active/online")), true),
 		);
 		$r = isset($rank[$state]) ? $rank[$state] : 2;
 		if (!isset($bymac[$mac]) || $r < $bymac[$mac]['_rank']) {
@@ -261,7 +306,9 @@ function wolscheduler_dhcp_leases() {
 
 /*
  * Host edit page (pkg_edit.php, custom_php_after_head_command): adds a
- * "DHCP lease" selector that fills MAC, interface, IP and description, and
+ * "DHCP lease" autocomplete (jQuery UI, loaded by foot.inc) that searches
+ * leases by MAC, hostname, description or IP and fills MAC, interface, IP
+ * and description, and
  * fills interface/IP when a known MAC is typed. Manual entry (no lease) works
  * the same way: typing the host IP selects the interface whose subnet has it.
  */
@@ -270,8 +317,8 @@ function wolscheduler_dhcp_picker() {
 	$json = json_encode(wolscheduler_dhcp_leases(), $jflags);
 	$subnets = json_encode(wolscheduler_interface_subnets(), $jflags);
 	$label = json_encode(gettext("DHCP lease"));
-	$placeholder = json_encode(gettext("Select to auto-fill..."));
-	$help = json_encode(gettext("Fills MAC, interface, host IP and description from a DHCP lease or static mapping."));
+	$placeholder = json_encode(gettext("Type a MAC, hostname, description or IP..."));
+	$help = json_encode(gettext("Searches DHCP leases and static mappings; picking one fills MAC, interface, host IP and description."));
 	$none = json_encode(gettext("No DHCP leases found - fill in the fields below manually."));
 	echo <<<EOT
 <script type="text/javascript">
@@ -299,37 +346,66 @@ events.push(function() {
 		}
 	}
 
-	var \$sel = $('<select class="form-control" id="wolsched_lease"></select>');
-	\$sel.append($('<option value=""></option>').text(leases.length ? {$placeholder} : {$none}));
-	var groups = {};
+	/* Lowercase text searched by the autocomplete: MAC (with and without ':'), names, IP, interface */
 	$.each(leases, function(i, l) {
-		var g = l.ifdescr || '-';
-		if (!groups[g]) {
-			groups[g] = $('<optgroup></optgroup>').attr('label', g);
-			\$sel.append(groups[g]);
-		}
-		var text = (l.name ? l.name + ' - ' : '') + l.ip + ' - ' + l.mac +
-		    ' (' + l.state + (l.online ? ', online' : '') + ')';
-		groups[g].append($('<option></option>').val(i).text(text));
+		l.search = [l.mac, l.mac.replace(/:/g, ''), l.hostname, l.descr, l.ip, l.ifdescr]
+		    .join(' ').toLowerCase();
 	});
-	if (!leases.length) {
-		\$sel.prop('disabled', true);
-	}
-	\$sel.on('change', function() {
-		if (this.value !== '') {
-			apply(leases[this.value], true);
+
+	var \$search = $('<input type="text" class="form-control" id="wolsched_lease" autocomplete="off" />')
+	    .attr('placeholder', leases.length ? {$placeholder} : {$none})
+	    .prop('disabled', !leases.length);
+
+	\$search.autocomplete({
+		minLength: 0,
+		delay: 0,
+		source: function(req, resp) {
+			/* every typed word must match; '-' in a MAC is treated as ':' */
+			var terms = String(req.term).trim().toLowerCase().replace(/-/g, ':').split(/\s+/);
+			resp($.map(leases, function(l) {
+				for (var i = 0; i < terms.length; i++) {
+					if (l.search.indexOf(terms[i]) === -1) {
+						return null;
+					}
+				}
+				return {label: l.name || l.mac, value: l.name || l.mac, lease: l};
+			}).slice(0, 50));
+		},
+		focus: function() {
+			return false;	/* keep the typed text while moving through the list */
+		},
+		select: function(e, ui) {
+			apply(ui.item.lease, true);
+			\$search.val(ui.item.value);
+			return false;
 		}
+	}).on('focus', function() {
+		$(this).autocomplete('search', $(this).val());
 	});
+
+	\$search.autocomplete('instance')._renderItem = function(ul, item) {
+		var l = item.lease;
+		var info = [l.ip, l.mac, l.ifdescr || '-', l.state + (l.online ? ', online' : '')];
+		if (l.hostname && l.descr && l.descr !== l.hostname) {
+			info.unshift(l.descr);
+		}
+		return $('<li></li>')
+		    .append($('<div></div>')
+		        .append($('<strong></strong>').text(l.name || l.mac))
+		        .append(' ')
+		        .append($('<small class="text-muted"></small>').text(info.join(' · '))))
+		    .appendTo(ul);
+	};
 
 	var \$row = $('<div class="form-group"></div>')
 	    .append($('<label class="col-sm-2 control-label"></label>').append($('<span></span>').text({$label})))
-	    .append($('<div class="col-sm-10"></div>').append(\$sel)
+	    .append($('<div class="col-sm-10"></div>').append(\$search)
 	        .append($('<span class="help-block"></span>').text({$help})));
 	\$mac.closest('.form-group').before(\$row);
 
 	/* Typed/pasted MAC: fill interface and IP from the matching lease */
 	\$mac.on('change', function() {
-		var mac = $.trim(this.value).toLowerCase().replace(/-/g, ':');
+		var mac = String(this.value).trim().toLowerCase().replace(/-/g, ':');
 		if (/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac)) {
 			this.value = mac;
 		}
@@ -343,7 +419,7 @@ events.push(function() {
 
 	/* Typed host IP (with or without a lease): select the interface of its subnet */
 	function ip2int(ip) {
-		var p = $.trim(ip).split('.');
+		var p = String(ip).trim().split('.');
 		if (p.length !== 4) {
 			return null;
 		}
@@ -379,6 +455,7 @@ EOT;
 
 /* Send a magic packet right now (used by the Status page). */
 function wolscheduler_send_now($host) {
+	$host = wolscheduler_normalize($host);
 	$bcast = wolscheduler_broadcast($host);
 	if ($bcast === null || !is_macaddr($host['mac'])) {
 		return false;
@@ -387,7 +464,7 @@ function wolscheduler_send_now($host) {
 	$rc = mwexec(WOLSCHED_BIN . " -w " . escapeshellarg($host['mac']) .
 	    " -b " . escapeshellarg($bcast) . " -P " . escapeshellarg($port));
 	if ($rc == 0) {
-		log_error(sprintf("[wolscheduler] Manual WOL sent to %s (%s) via %s.", $host['descr'], $host['mac'], $bcast));
+		wolscheduler_log(LOG_NOTICE, sprintf("Manual WOL sent to %s (%s) via %s.", $host['descr'], $host['mac'], $bcast));
 	}
 	return ($rc == 0);
 }

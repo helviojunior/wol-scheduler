@@ -17,8 +17,9 @@ require_once("/usr/local/pkg/wolscheduler.inc");
 
 $hosts = wolscheduler_hosts();
 $savemsg = null;
+$savetype = 'info';
 
-if ($_POST['wake'] !== null && isset($hosts[$_POST['id']])) {
+if (isset($_POST['wake'], $_POST['id']) && isset($hosts[$_POST['id']])) {
 	$h = $hosts[$_POST['id']];
 	if (wolscheduler_send_now($h)) {
 		$savemsg = sprintf(gettext("Magic packet sent to %s (%s)."), htmlspecialchars($h['descr']), htmlspecialchars($h['mac']));
@@ -86,7 +87,7 @@ display_top_tabs($tab_array);
 			<tbody>
 <?php foreach ($hosts as $id => $h):
 	$ip = (!empty($h['keepalive']) && is_ipaddrv4($h['ipaddr'])) ? $h['ipaddr'] : '-';
-	$st = $status[strtolower($h['mac']) . '|' . $ip];
+	$st = $status[strtolower($h['mac']) . '|' . $ip] ?? null;
 	$state = empty($h['enable']) ? 'disabled' : ($st ? $st['state'] : 'n/a');
 	switch ($state) {
 		case 'up':       $badge = 'label-success'; break;
