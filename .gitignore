@@ -1,6 +1,5 @@
 # Build output
 dist/
-pkg/
 daemon/wolscheduler
 *.o
 
